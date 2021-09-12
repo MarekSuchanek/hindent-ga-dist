@@ -1,0 +1,82 @@
+name: Build hindent binary
+
+on:
+  push:
+
+jobs:
+
+  build:
+    runs-on: ubuntu-20.04
+    
+    env:
+      HINDENT_VERSION: '5.3.2'
+      STACK_VERSION: '2.7.3'
+
+    steps:
+    - name: Checkout git repository
+      uses: actions/checkout@v2
+    
+    - name: Prepare ~/.local/bin
+      run: |
+        mkdir -p ~/.local/bin
+        export PATH=~/.local/bin:$PATH
+        
+    - name: Cache ~/.local/bin
+      id: cache-local-bin
+      uses: actions/cache@v2
+      with:
+        path: ~/.local/bin
+        key: local-bin-${{ env.STACK_VERSION }}
+    
+    - name: Cache ~/.stack
+      id: cache-stack
+      uses: actions/cache@v2
+      with:
+        path: ~/.stack
+        key: stack-home-ubuntu20-${{ env.STACK_VERSION }}
+        restore-keys: |
+          stack-home-ubuntu20-
+ 
+    - name: Setup stack
+      if: steps.cache-local-bin.outputs.cache-hit != 'true'
+      run: |
+        curl -L https://github.com/commercialhaskell/stack/releases/download/v$STACK_VERSION/stack-$STACK_VERSION-linux-x86_64.tar.gz | tar xz --wildcards --strip-components=1 -C ~/.local/bin '*/stack';
+ 
+    - name: Install hindent
+      run: |
+        stack install hindent-$HINDENT_VERSION
+        hindent --version
+        cp $(which hindent) ./hindent
+
+    - name: Archive production artifacts
+      uses: actions/upload-artifact@v2
+      with:
+        name: hindent-ga-ubuntu20-${{ env.HINDENT_VERSION }}
+        path: |
+          hindent
+        retention-days: 1
+
+    - name: Check if tag is correct
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      run: |
+        GITHUB_TAG=$(echo $GITHUB_REF | cut -d"/" -f3 | cut -d"-" -f1)
+        if [ ! $GITHUB_TAG = "v$HINDENT_VERSION" ]; then
+          echo "Non-matching tags: $GITHUB_TAG vs v$HINDENT_VERSION"
+          exit 1
+        fi
+
+    - name: Prepare release info
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      run: |
+        echo "GitHub Actions build of hindent" > release-body.md
+        echo "" >> release-body.md
+        echo "* environment: ubuntu-20.04" >> release-body.md
+        echo "* stack: $STACK_VERSION" >> release-body.md
+        echo "* hindent: $HINDENT_VERSION" >> release-body.md
+
+    - name: Release
+      uses: softprops/action-gh-release@v1
+      if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+      with:
+        body_path: release-body.md
+        files: hindent
